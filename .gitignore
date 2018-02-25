@@ -1,0 +1,9 @@
+*.cmx
+*.cmi
+*.o
+*.log
+*.opt
+
+*/.depend
+regression/test
+
