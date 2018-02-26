@@ -41,6 +41,14 @@ let rec eval cfg program: config =
 	| hd_instr :: rest_program -> eval (run_instruction cfg hd_instr) rest_program
 	| [] -> cfg
 
+(* Top-level evaluation
+
+     val run : int list -> prg -> int list
+
+   Takes an input stream, a program, and returns an output stream this program calculates
+*)
+let run i p = let (_, (_, _, o)) = eval ([], (Syntax.Expr.empty, i, [])) p in o
+
 (* Stack machine compiler
 
      val compile : Syntax.Stmt.t -> prg

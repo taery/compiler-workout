@@ -95,3 +95,17 @@ module Stmt =
         | Assign (name, expr) -> (Expr.update name (Expr.eval st expr) st, input_s, output_s)
         | Seq (stmt1, stmt2) -> eval (eval (st, input_s, output_s) stmt1) stmt2;;                                        
   end
+
+(* The top-level definitions *)
+
+(* The top-level syntax category is statement *)
+type t = Stmt.t    
+
+(* Top-level evaluator
+
+     eval : int list -> t -> int list
+
+   Takes a program and its input stream, and returns the output stream
+*)
+let eval i p =
+  let _, _, o = Stmt.eval (Expr.empty, i, []) p in o
