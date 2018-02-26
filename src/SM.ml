@@ -28,7 +28,7 @@ let rec eval cfg program: config =
 	let run_instruction (stack, (state, input_s, output_s)) instruction: config = 
 	  match instruction with
 	   | BINOP op -> (match stack with 
-	                  | left :: right :: rest_stk -> 
+	                  | right :: left :: rest_stk -> 
 	                     let bin_expr = Expr.Binop (op, Expr.Const left, Expr.Const right) in 
 	                     (Expr.eval state bin_expr :: rest_stk, (state, input_s, output_s))
 	                  | _ -> failwith "Not enouth arguments for binary operation")
