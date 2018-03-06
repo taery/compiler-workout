@@ -5,6 +5,7 @@ open GT
 
 (* Opening a library for combinator-based syntax analysis *)
 open Ostap.Combinators
+open Ostap
        
 (* Simple expressions: syntax and semantics *)
 module Expr =
@@ -44,7 +45,30 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval st e : int = 
+      match e with 
+        | Const (c) -> c
+        | Var (v) -> st v 
+        | Binop (op, left, right) -> 
+          let e_l = eval st left in
+          let e_r = eval st right in 
+          let to_bool cond = if cond == 0 then false else true in
+          let to_int b = if b then 1 else 0 in
+            match op with
+              | "!!" -> to_int (to_bool e_l || to_bool e_r)
+              | "&&" -> to_int (to_bool e_l && to_bool e_r)
+              | "==" -> to_int (e_l == e_r)
+              | "!=" -> to_int (e_l != e_r)
+              | ">=" -> to_int (e_l >= e_r)
+              | "<=" -> to_int (e_l <= e_r)
+              | ">" -> to_int (e_l > e_r)
+              | "<" -> to_int (e_l < e_r)
+              | "+" -> e_l + e_r
+              | "-" -> e_l - e_r
+              | "*" -> e_l * e_r
+              | "/" -> e_l / e_r
+              | "%" -> e_l mod e_r
+              | _ -> failwith (Printf.sprintf "Unknown operation %s" op);;
 
     (* Expression parser. You can use the following terminals:
 
@@ -52,8 +76,24 @@ module Expr =
          DECIMAL --- a decimal constant [0-9]+ as a string
    
     *)
+
+    let to_binop ops = List.map (fun op -> ostap ($(op)), fun x y -> Binop(op, x, y)) ops 
+
     ostap (
-      parse: empty {failwith "Not implemented yet"}
+      parse: expr;
+      expr: 
+        !(Util.expr
+          (fun x -> x)
+          [|
+            `Lefta, to_binop ["!!"];
+            `Lefta, to_binop ["&&"];
+            `Nona, to_binop ["=="; "<="; "<"; ">="; ">"; "!="];
+            `Lefta, to_binop ["+"; "-"];
+            `Lefta, to_binop ["*"; "/"; "%"];
+          |]
+          primary
+        );
+      primary: x:IDENT { Var x } | n:DECIMAL { Const n } | -"(" expr -")"
     )
 
   end
@@ -78,11 +118,22 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval (st, input_s, output_s) stmt: config = 
+      match stmt with 
+        | Read name -> (Expr.update name (List.hd input_s) st, List.tl input_s, output_s)
+        | Write expr -> let res = Expr.eval st expr in 
+            (st, input_s, output_s @ [res])
+        | Assign (name, expr) -> (Expr.update name (Expr.eval st expr) st, input_s, output_s)
+        | Seq (stmt1, stmt2) -> eval (eval (st, input_s, output_s) stmt1) stmt2;;
 
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not implemented yet"}
+      parse: seq | stmt;
+      stmt: read | write | assign;
+      read: "read" -"(" variable:IDENT -")" { Read variable };
+      write: "write" -"(" expr: !(Expr.parse) -")" { Write expr };
+      assign: variable:IDENT -":=" expr:!(Expr.parse) { Assign (variable, expr) };
+      seq: <s::ss> : !(Util.listBy)[ostap (";")][stmt] { List.fold_left (fun x y -> Seq (x, y)) s ss}
     )
       
   end
