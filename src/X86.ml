@@ -73,14 +73,6 @@ let show instr =
 (* Opening stack machine to use instructions without fully qualified names *)
 open SM
 
-(* Symbolic stack machine evaluator
-
-     compile : env -> prg -> env * instr list
-
-   Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
-   of x86 instructions
-*)
-let compile env code = failwith "Not yet implemented"
 
 (* A set of strings *)           
 module S = Set.Make (String)
@@ -126,6 +118,63 @@ class env =
     (* gets all global variables *)      
     method globals = S.elements globals
   end
+
+let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =  
+  let cmp_operator sf = [Binop("^", eax, eax); Mov (a, edx); Binop("cmp", edx, b); Set(sf, "%al")], eax in 
+  match op with
+  | "+" | "-" | "*" -> [Mov (a, eax); Binop(op, b, eax)], eax
+  | "<=" -> cmp_operator "le"  
+  | "<" -> cmp_operator "l" 
+  | ">=" -> cmp_operator "ge" 
+  | ">" -> cmp_operator "g" 
+  | "==" -> cmp_operator "e" 
+  | "!=" -> cmp_operator "ne" 
+  | "!!" | "&&" -> [
+    Binop ("^", eax, eax); Binop ("^", edx, edx); 
+    Binop("cmp", L 0, a); Set("ne", "%al");
+    Binop("cmp", L 0, b); Set("ne", "%dl");
+    Binop(op, eax, edx)
+  ], edx
+  | "/" -> [Mov (b, eax); Cltd; IDiv a], eax
+  | "%" -> [Mov (b, eax); Cltd; IDiv a], edx
+  | _ -> failwith "Not implemented yet %s" @@ op;;
+
+
+let compile_instruction (e: env) (inst: insn): env * instr list = match inst with
+  | READ -> 
+    let s, res_env = e#allocate in
+    res_env, [Call "Lread"; Mov (eax, s)]
+  | WRITE -> 
+    let s, res_env = e#pop in 
+    res_env, [Push s; Call "Lwrite"; Pop eax]
+  | CONST n ->
+    let s, res_env = e#allocate in 
+    res_env, [Mov (L n, s)]
+  | ST x -> 
+    let s, res_env = (e#global x)#pop in
+    res_env, [Mov (s, M ("global_" ^ x))]
+  | LD x -> 
+    let s, res_env = (e#global x)#allocate in 
+    res_env, [Mov (M ("global_" ^ x), s)]
+  | BINOP op -> 
+    let a, b, e1 = e#pop2 in 
+      let s, res_env = e1#allocate in 
+        let cmds, res = compile_operator op a b in 
+        res_env, cmds @ [Mov (res, s)];;
+
+(* Symbolic stack machine evaluator
+
+     compile : env -> prg -> env * instr list
+
+   Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
+   of x86 instructions
+*)
+let rec compile (e: env) (code: prg): env * instr list = match code with
+| [] -> e, []
+| instruction :: rest_code -> 
+  let e2, asm =  compile_instruction e instruction in 
+    let e3, rest_asm = compile e2 rest_code in 
+    e3, asm @ rest_asm;;
 
 (* compiles a unit: generates x86 machine code for the stack program and surrounds it
    with function prologue/epilogue
