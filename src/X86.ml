@@ -119,8 +119,6 @@ class env =
     method globals = S.elements globals
   end
 
-let sfx op
-
 let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =  
   let cmp_operator sf = [Mov (b, eax); Binop("^", edx, edx); Binop("cmp", a, eax); Set(sf, "%dl")], edx in 
   match op with
