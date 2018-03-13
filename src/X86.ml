@@ -120,7 +120,7 @@ class env =
   end
 
 let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =  
-  let cmp_operator sf = [Mov (b, edx); Binop("cmp", edx, a); Binop("^", eax, eax); Set(sf, "%al")], eax in 
+  let cmp_operator sf = [Mov (b, edx); Binop("cmp", a, edx); Binop("^", eax, eax); Set(sf, "%al")], eax in 
   match op with
   | "+" | "-" | "*" -> [Mov (b, eax); Binop(op, a, eax)], eax
   | "<=" -> cmp_operator "le"  
@@ -152,10 +152,10 @@ let compile_instruction (e: env) (inst: insn): env * instr list = match inst wit
     res_env, [Mov (L n, s)]
   | ST x -> 
     let s, res_env = (e#global x)#pop in
-    res_env, [Mov (s, M ("global_" ^ x))]
+    res_env, [Mov (s, M (e#loc x))]
   | LD x -> 
     let s, res_env = (e#global x)#allocate in 
-    res_env, [Mov (M ("global_" ^ x), s)]
+    res_env, [Mov (M (e#loc x), s)]
   | BINOP op -> 
     let a, b, e1 = e#pop2 in 
       let s, res_env = e1#allocate in 
