@@ -119,6 +119,7 @@ class env =
     method globals = S.elements globals
   end
 
+
 let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =  
   let cmp_operator sf = [Mov (b, eax); Binop("^", edx, edx); Binop("cmp", a, eax); Set(sf, "%dl")], edx in 
   match op with
@@ -140,7 +141,8 @@ let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =
   | _ -> failwith "Not implemented yet %s" @@ op;;
 
 
-let compile_instruction (e: env) (inst: insn): env * instr list = match inst with
+let compile_instruction (e: env) (inst: insn): env * instr list = 
+  match inst with
   | READ -> 
     let s, res_env = e#allocate in
     res_env, [Call "Lread"; Mov (eax, s)]
@@ -152,10 +154,10 @@ let compile_instruction (e: env) (inst: insn): env * instr list = match inst wit
     res_env, [Mov (L n, s)]
   | ST x -> 
     let s, res_env = (e#global x)#pop in
-    res_env, [Mov (s, M (e#loc x))]
+    res_env,  [Mov (s, eax); Mov (eax, M (e#loc x))]
   | LD x -> 
     let s, res_env = (e#global x)#allocate in 
-    res_env, [Mov (M (e#loc x), s)]
+    res_env, [Mov (M (e#loc x), eax); Mov (eax, s)]
   | BINOP op -> 
     let a, b, e1 = e#pop2 in 
       let s, res_env = e1#allocate in 
