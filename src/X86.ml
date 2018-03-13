@@ -120,9 +120,9 @@ class env =
   end
 
 let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =  
-  let cmp_operator sf = [Binop("^", eax, eax); Mov (a, edx); Binop("cmp", edx, b); Set(sf, "%al")], eax in 
+  let cmp_operator sf = [Mov (b, edx); Binop("cmp", edx, a); Binop("^", eax, eax); Set(sf, "%al")], eax in 
   match op with
-  | "+" | "-" | "*" -> [Mov (a, eax); Binop(op, b, eax)], eax
+  | "+" | "-" | "*" -> [Mov (b, eax); Binop(op, a, eax)], eax
   | "<=" -> cmp_operator "le"  
   | "<" -> cmp_operator "l" 
   | ">=" -> cmp_operator "ge" 
