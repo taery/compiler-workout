@@ -5,7 +5,8 @@ open GT
 
 (* Opening a library for combinator-based syntax analysis *)
 open Ostap.Combinators
-       
+open Ostap
+
 (* Simple expressions: syntax and semantics *)
 module Expr =
   struct
@@ -43,19 +44,58 @@ module Expr =
  
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
-    *)                                                       
-    let eval st expr = failwith "Not yet implemented"
+    *)
+    let rec eval st e : int =
+      match e with
+        | Const (c) -> c
+        | Var (v) -> st v
+        | Binop (op, left, right) ->
+          let e_l = eval st left in
+          let e_r = eval st right in
+          let to_bool cond = if cond == 0 then false else true in
+          let to_int b = if b then 1 else 0 in
+            match op with
+              | "!!" -> to_int (to_bool e_l || to_bool e_r)
+              | "&&" -> to_int (to_bool e_l && to_bool e_r)
+              | "==" -> to_int (e_l == e_r)
+              | "!=" -> to_int (e_l != e_r)
+              | ">=" -> to_int (e_l >= e_r)
+              | "<=" -> to_int (e_l <= e_r)
+              | ">" -> to_int (e_l > e_r)
+              | "<" -> to_int (e_l < e_r)
+              | "+" -> e_l + e_r
+              | "-" -> e_l - e_r
+              | "*" -> e_l * e_r
+              | "/" -> e_l / e_r
+              | "%" -> e_l mod e_r
+              | _ -> failwith (Printf.sprintf "Unknown operation %s" op);;
 
     (* Expression parser. You can use the following terminals:
 
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
          DECIMAL --- a decimal constant [0-9]+ as a string
-                                                                                                                  
+
     *)
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+
+    let to_binop ops = List.map (fun op -> ostap ($(op)), fun x y -> Binop(op, x, y)) ops
+
+    ostap (
+      parse: expr;
+      expr:
+        !(Util.expr
+          (fun x -> x)
+          [|
+            `Lefta, to_binop ["!!"];
+            `Lefta, to_binop ["&&"];
+            `Nona, to_binop ["=="; "<="; "<"; ">="; ">"; "!="];
+            `Lefta, to_binop ["+"; "-"];
+            `Lefta, to_binop ["*"; "/"; "%"];
+          |]
+          primary
+        );
+      primary: x:IDENT { Var x } | n:DECIMAL { Const n } | -"(" expr -")"
     )
-    
+
   end
                     
 (* Simple statements: syntax and sematics *)
@@ -71,7 +111,8 @@ module Stmt =
     (* empty statement                  *) | Skip
     (* conditional                      *) | If     of Expr.t * t * t
     (* loop with a pre-condition        *) | While  of Expr.t * t
-    (* loop with a post-condition       *) (* add yourself *)  with show
+    (* loop with a post-condition       *) | RepeatUntil  of t * Expr.t
+    with show
                                                                     
     (* The type of configuration: a state, an input stream, an output stream *)
     type config = Expr.state * int list * int list 
@@ -82,11 +123,41 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let rec eval conf stmt = failwith "Not yet implemented"
-                               
+    let rec eval ((st, input_s, output_s) as cfg) stmt: config =
+      match stmt with
+        | Read name -> (Expr.update name (List.hd input_s) st, List.tl input_s, output_s)
+        | Write expr -> let res = Expr.eval st expr in
+            (st, input_s, output_s @ [res])
+        | Assign (name, expr) -> (Expr.update name (Expr.eval st expr) st, input_s, output_s)
+        | Seq (stmt1, stmt2) -> eval (eval cfg stmt1) stmt2
+        | Skip -> cfg
+        | If (cond, th, els) -> if Expr.eval st cond <> 0 then eval cfg th else eval cfg els
+        | While (cond, body) -> if Expr.eval st cond <> 0 then eval (eval cfg body) stmt else cfg
+        | RepeatUntil (body, cond) ->
+            let ((res_st, _, _) as res_cfg) = eval cfg body in
+            if Expr.eval res_st cond == 0 then eval res_cfg stmt else res_cfg
+
+    let rec parse_ifs elifs els = match elifs with
+        | [] -> els
+        | (i_cond, i_body)::rest_ifs -> If (i_cond, i_body, parse_ifs rest_ifs els);;
+
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not yet implemented"}
+      parse: seq | stmt;
+      seq: <s::ss> : !(Util.listBy)[ostap (";")][stmt] { List.fold_left (fun x y -> Seq (x, y)) s ss};
+      stmt: read | write | assign | skip | if_ | while_ | until_ | for_;
+      read: "read" -"(" variable:IDENT -")" { Read variable };
+      write: "write" -"(" expr: !(Expr.parse) -")" { Write expr };
+      assign: variable:IDENT -":=" expr:!(Expr.parse) { Assign (variable, expr) };
+      skip: %"skip" { Skip };
+      if_: %"if" condition:!(Expr.parse)
+           %"then" then_body:parse
+           elif_branches: (%"elif" !(Expr.parse) %"then" parse)*
+           else_branch: (%"else" parse)?
+           %"fi" { If (condition, then_body, parse_ifs elif_branches (match else_branch with None -> Skip | Some b -> b)) };
+      while_: %"while" condition:!(Expr.parse) %"do" body:parse %"od" { While (condition, body) };
+      until_: %"repeat" body:parse %"until" condition:!(Expr.parse) { RepeatUntil (body, condition) };
+      for_: %"for" i:parse -"," condition:!(Expr.parse) -"," inc:parse %"do" body:parse %"od" {Seq(i, While(condition, Seq(body, inc)))}
     )
       
   end

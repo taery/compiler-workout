@@ -134,6 +134,70 @@ class env =
     method globals = S.elements globals
   end
 
+
+let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =
+  let cmp_operator sf = [Mov (b, eax); Binop("^", edx, edx); Binop("cmp", a, eax); Set(sf, "%dl")], edx in
+  match op with
+  | "+" | "-" | "*" -> [Mov (b, eax); Binop(op, a, eax)], eax
+  | "<=" -> cmp_operator "le"
+  | "<" -> cmp_operator "l"
+  | ">=" -> cmp_operator "ge"
+  | ">" -> cmp_operator "g"
+  | "==" -> cmp_operator "e"
+  | "!=" -> cmp_operator "ne"
+  | "!!" | "&&" -> [
+    Binop ("^", eax, eax); Binop ("^", edx, edx);
+    Binop("cmp", L 0, a); Set("ne", "%al");
+    Binop("cmp", L 0, b); Set("ne", "%dl");
+    Binop(op, eax, edx)
+  ], edx
+  | "/" -> [Mov (b, eax); Cltd; IDiv a], eax
+  | "%" -> [Mov (b, eax); Cltd; IDiv a], edx
+  | _ -> failwith "Not implemented yet %s" @@ op;;
+
+
+let compile_instruction (e: env) (inst: insn): env * instr list =
+  match inst with
+  | READ ->
+    let s, res_env = e#allocate in
+    res_env, [Call "Lread"; Mov (eax, s)]
+  | WRITE ->
+    let s, res_env = e#pop in
+    res_env, [Push s; Call "Lwrite"; Pop eax]
+  | CONST n ->
+    let s, res_env = e#allocate in
+    res_env, [Mov (L n, s)]
+  | ST x ->
+    let s, res_env = (e#global x)#pop in
+    res_env,  [Mov (s, eax); Mov (eax, M (e#loc x))]
+  | LD x ->
+    let s, res_env = (e#global x)#allocate in
+    res_env, [Mov (M (e#loc x), eax); Mov (eax, s)]
+  | BINOP op ->
+    let a, b, e1 = e#pop2 in
+      let s, res_env = e1#allocate in
+        let cmds, res = compile_operator op a b in
+        res_env, cmds @ [Mov (res, s)]
+  | LABEL label -> e, [Label label]
+  | JMP label -> e, [Jmp label]
+  | CJMP (condition, label) ->
+    let s, res_env = e#pop in
+    res_env, [Binop("cmp", L 0, s); CJmp(condition, label)]
+
+(* Symbolic stack machine evaluator
+
+     compile : env -> prg -> env * instr list
+
+   Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
+   of x86 instructions
+*)
+let rec compile (e: env) (code: prg): env * instr list = match code with
+| [] -> e, []
+| instruction :: rest_code ->
+  let e2, asm =  compile_instruction e instruction in
+    let e3, rest_asm = compile e2 rest_code in
+    e3, asm @ rest_asm;;
+
 (* Compiles a unit: generates x86 machine code for the stack program and surrounds it
    with function prologue/epilogue
 *)
