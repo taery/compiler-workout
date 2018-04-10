@@ -133,14 +133,14 @@ module Expr =
           primary
         );
       primary:
-          x:IDENT { Var x }
-        | n:DECIMAL { Const n }
+        n:DECIMAL { Const n }
         | f_name:IDENT -"(" args:!(Util.list0)[parse] -")" { Call (f_name, args) }
+        |  x:IDENT { Var x }
         | -"(" expr -")"
     )
-    
+
   end
-                    
+
 (* Simple statements: syntax and sematics *)
 module Stmt =
   struct
@@ -150,19 +150,19 @@ module Stmt =
     (* read into the variable           *) | Read   of string
     (* write the value of an expression *) | Write  of Expr.t
     (* assignment                       *) | Assign of string * Expr.t
-    (* composition                      *) | Seq    of t * t 
+    (* composition                      *) | Seq    of t * t
     (* empty statement                  *) | Skip
     (* conditional                      *) | If     of Expr.t * t * t
     (* loop with a pre-condition        *) | While  of Expr.t * t
     (* loop with a post-condition       *) | Repeat of t * Expr.t
     (* return statement                 *) | Return of Expr.t option
     (* call a procedure                 *) | Call   of string * Expr.t list with show
-                                                                    
+
     (* Statement evaluator
 
          val eval : env -> config -> t -> config
 
-       Takes an environment, a configuration and a statement, and returns another configuration. The 
+       Takes an environment, a configuration and a statement, and returns another configuration. The
        environment is the same as for expressions
     *)
     let rec eval env ((st, input_s, output_s, ret) as cfg) k stmt =
