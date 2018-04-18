@@ -90,14 +90,104 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code = failwith "Not implemented"
-                                
-(* A set of strings *)           
+let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =
+  let cmp_operator sf = [Mov (b, eax); Binop("^", edx, edx); Binop("cmp", a, eax); Set(sf, "%dl")], edx in
+  match op with
+  | "+" | "-" | "*" -> [Mov (b, eax); Binop(op, a, eax)], eax
+  | "<=" -> cmp_operator "le"
+  | "<" -> cmp_operator "l"
+  | ">=" -> cmp_operator "ge"
+  | ">" -> cmp_operator "g"
+  | "==" -> cmp_operator "e"
+  | "!=" -> cmp_operator "ne"
+  | "!!" | "&&" -> [
+    Binop ("^", eax, eax); Binop ("^", edx, edx);
+    Binop("cmp", L 0, a); Set("ne", "%al");
+    Binop("cmp", L 0, b); Set("ne", "%dl");
+    Binop(op, eax, edx)
+  ], edx
+  | "/" -> [Mov (b, eax); Cltd; IDiv a], eax
+  | "%" -> [Mov (b, eax); Cltd; IDiv a], edx
+  | _ -> failwith "Not implemented yet %s" @@ op;;
+
+let push_list l = List.map (fun x -> Push x) l;;
+
+let compile_instruction e inst =
+  match inst with
+  | READ ->
+    let s, res_env = e#allocate in
+    res_env, [Call "Lread"; Mov (eax, s)]
+  | WRITE ->
+    let s, res_env = e#pop in
+    res_env, [Push s; Call "Lwrite"; Pop eax]
+  | CONST n ->
+    let s, res_env = e#allocate in
+    res_env, [Mov (L n, s)]
+  | ST x ->
+    let s, res_env = (e#global x)#pop in
+    res_env, [Mov (s, eax); Mov (eax, res_env#loc x)]
+  | LD x ->
+    let s, res_env = (e#global x)#allocate in
+    res_env, [Mov (res_env#loc x, eax); Mov (eax, s)]
+  | BINOP op ->
+    let a, b, e1 = e#pop2 in
+      let s, res_env = e1#allocate in
+        let cmds, res = compile_operator op a b in
+        res_env, cmds @ [Mov (res, s)]
+  | LABEL label -> e, [Label label]
+  | JMP label -> e, [Jmp label]
+  | CJMP (condition, label) ->
+    let s, res_env = e#pop in
+    res_env, [Binop("cmp", L 0, s); CJmp(condition, label)]
+  | BEGIN (f_name, args, locals) ->
+    let res_env = e#enter f_name args locals in
+    res_env, [Push ebp; Mov(esp, ebp); Binop("-", M ("$" ^ res_env#lsize), esp)]
+  | END ->
+    let s = Printf.sprintf "\t.set %s, %d" e#lsize (e#allocated * word_size) in
+    e, [Label e#epilogue; Mov (ebp, esp); Pop ebp; Ret; Meta s]
+  | RET has_res ->
+    if has_res then
+      let res, res_env = e#pop in res_env, [Mov (res, eax); Jmp res_env#epilogue]
+    else e, [Jmp e#epilogue]
+  | CALL (f_name, n, is_proc) ->
+    let rec get_args env args n =
+    match n with
+     | 0 -> env, args
+     | i -> let param, env = env#pop in get_args env (param :: args) (i - 1)
+    in
+    let env, args = get_args e [] n in
+    let res_env, res = if is_proc then env, [] else let link, env = env#allocate in env, [Mov (eax, link)]
+    in res_env, (push_list env#live_registers)
+                @ (push_list (List.rev args))
+                @ [Call f_name;Binop ("+", L (n * word_size), esp)]
+                @ (List.rev_map (fun x -> Pop x) env#live_registers)
+                @ res
+
+(* Symbolic stack machine evaluator
+
+     compile : env -> prg -> env * instr list
+
+   Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
+   of x86 instructions
+*)
+let rec compile env code = match code with
+| [] -> env, []
+| instruction :: rest_code ->
+  (let env', asm = compile_instruction env instruction in
+    let res_env, rest_asm = compile env' rest_code in
+    res_env, asm @ rest_asm)
+
+(* A set of strings *)
 module S = Set.Make (String)
 
+
+let init n f =
+  let rec _init iter n f = if iter < n then (f iter) :: (_init (iter + 1) n f) else []
+ in _init 0 n f
+
 (* Environment implementation *)
-let make_assoc l = List.combine l (List.init (List.length l) (fun x -> x))
-                     
+let make_assoc l = List.combine l (init (List.length l) (fun x -> x))
+
 class env =
   object (self)
     val globals     = S.empty (* a set of global variables         *)
@@ -106,15 +196,15 @@ class env =
     val args        = []      (* function arguments                *)
     val locals      = []      (* function local variables          *)
     val fname       = ""      (* function name                     *)
-                        
+
     (* gets a name for a global variable *)
     method loc x =
       try S (- (List.assoc x args)  -  1)
-      with Not_found ->  
+      with Not_found ->
         try S (List.assoc x locals) with Not_found -> M ("global_" ^ x)
-        
+
     (* allocates a fresh position on a symbolic stack *)
-    method allocate =    
+    method allocate =
       let x, n =
 	let rec allocate' = function
 	| []                            -> ebx     , 0
@@ -139,28 +229,28 @@ class env =
     (* registers a global variable in the environment *)
     method global x  = {< globals = S.add ("global_" ^ x) globals >}
 
-    (* gets all global variables *)      
+    (* gets all global variables *)
     method globals = S.elements globals
 
     (* gets a number of stack positions allocated *)
-    method allocated = stack_slots                                
-                                
+    method allocated = stack_slots
+
     (* enters a function *)
     method enter f a l =
       {< stack_slots = List.length l; stack = []; locals = make_assoc l; args = make_assoc a; fname = f >}
 
     (* returns a label for the epilogue *)
     method epilogue = Printf.sprintf "L%s_epilogue" fname
-                                     
+
     (* returns a name for local size meta-symbol *)
     method lsize = Printf.sprintf "L%s_SIZE" fname
 
     (* returns a list of live registers *)
     method live_registers =
       List.filter (function R _ -> true | _ -> false) stack
-      
+
   end
-  
+
 (* Generates an assembler text for a program: first compiles the program into
    the stack code, then generates x86 assember code, then prints the assembler file
 *)
@@ -171,7 +261,7 @@ let genasm (ds, stmt) =
       (new env)
       ((LABEL "main") :: (BEGIN ("main", [], [])) :: SM.compile (ds, stmt))
   in
-  let data = Meta "\t.data" :: (List.map (fun s -> Meta (s ^ ":\t.int\t0")) env#globals) in 
+  let data = Meta "\t.data" :: (List.map (fun s -> Meta (s ^ ":\t.int\t0")) env#globals) in
   let asm = Buffer.create 1024 in
   List.iter
     (fun i -> Buffer.add_string asm (Printf.sprintf "%s\n" @@ show i))
@@ -185,4 +275,4 @@ let build prog name =
   close_out outf;
   let inc = try Sys.getenv "RC_RUNTIME" with _ -> "../runtime" in
   Sys.command (Printf.sprintf "gcc -m32 -o %s %s/runtime.o %s.s" name inc name)
- 
+
