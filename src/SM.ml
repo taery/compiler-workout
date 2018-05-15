@@ -1,11 +1,11 @@
-open GT       
+open GT
 open Language
-       
+
 (* The type for the stack machine instructions *)
 @type insn =
 (* binary operator                 *) | BINOP   of string
 (* put a constant on the stack     *) | CONST   of int
-(* put a string on the stack       *) | STRING  of string                      
+(* put a string on the stack       *) | STRING  of string
 (* load a variable to the stack    *) | LD      of string
 (* store a variable from the stack *) | ST      of string
 (* store in an array               *) | STA     of string * int
@@ -16,10 +16,10 @@ open Language
 (* end procedure definition        *) | END
 (* calls a function/procedure      *) | CALL    of string * int * bool
 (* returns from a function         *) | RET     of bool with show
-                                                   
+
 (* The type for the stack machine program *)
 type prg = insn list
-                            
+
 (* The type for the stack machine configuration: control stack, stack and configuration from statement
    interpreter
 *)
@@ -129,7 +129,7 @@ let rec compile_expr expr =
     | Expr.String s -> [STRING s]
     | Expr.Array a -> (List.concat (List.map compile_expr a)) @ [CALL ("$array", List.length a, false)]
     | Expr.Binop (op, expr1, expr2) -> (compile_expr expr1) @ (compile_expr expr2) @ [BINOP op]
-    | Expr.Call (f_name, args) -> List.concat (List.map compile_expr args) @ [CALL (f_name, List.length args, false)]
+    | Expr.Call (f_name, args) -> List.concat (List.map compile_expr (List.rev args)) @ [CALL ("L" ^ f_name, List.length args, false)]
     | Expr.Length e -> (compile_expr e) @ [CALL ("$length", 1, false)]
     | Expr.Elem (e, i) -> (compile_expr e) @ (compile_expr i) @ [CALL ("$elem", 2, false)]
 
@@ -150,7 +150,7 @@ let rec compile_statements stmts =
     | Stmt.Repeat (body, cond) ->
       let start_point = labels#generate in
       [LABEL start_point] @ (compile_statements body) @ (compile_expr cond) @ [CJMP ("z", start_point)]
-    | Stmt.Call (f_name, args) -> List.concat (List.map compile_expr args) @ [CALL (f_name, List.length args, true)]
+    | Stmt.Call (f_name, args) -> List.concat (List.map compile_expr args) @ [CALL ("L"^f_name, List.length args, true)]
     | Stmt.Return maybe_val -> match maybe_val with Some v -> (compile_expr v) @ [RET true] | _ -> [RET false]
 
 let compile_definition (f_name, (args, local_vars, body)) = [LABEL f_name; BEGIN (f_name, args, local_vars)] @ (compile_statements body) @ [END]
