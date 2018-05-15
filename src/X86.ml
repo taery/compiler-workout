@@ -90,25 +90,90 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code =
-  let suffix = function
-  | "<"  -> "l"
-  | "<=" -> "le"
-  | "==" -> "e"
-  | "!=" -> "ne"
-  | ">=" -> "ge"
-  | ">"  -> "g"
-  | _    -> failwith "unknown operator"	
-  in
-  let rec compile' env scode = failwith "Not implemented" in
-  compile' env code
+let rec compile_operator (op: string) (a: opnd) (b: opnd): instr list * opnd =
+  let cmp_operator sf = [Mov (b, eax); Binop("^", edx, edx); Binop("cmp", a, eax); Set(sf, "%dl")], edx in
+  match op with
+  | "+" | "-" | "*" -> [Mov (b, eax); Binop(op, a, eax)], eax
+  | "<=" -> cmp_operator "le"
+  | "<" -> cmp_operator "l"
+  | ">=" -> cmp_operator "ge"
+  | ">" -> cmp_operator "g"
+  | "==" -> cmp_operator "e"
+  | "!=" -> cmp_operator "ne"
+  | "!!" | "&&" -> [
+    Binop ("^", eax, eax); Binop ("^", edx, edx);
+    Binop("cmp", L 0, a); Set("ne", "%al");
+    Binop("cmp", L 0, b); Set("ne", "%dl");
+    Binop(op, eax, edx)
+  ], edx
+  | "/" -> [Mov (b, eax); Cltd; IDiv a], eax
+  | "%" -> [Mov (b, eax); Cltd; IDiv a], edx
+  | _ -> failwith "Not implemented yet %s" @@ op;;
+
+let push_list l = List.map (fun x -> Push x) l;;
+
+let compile_instruction e inst =
+  match inst with
+  | CONST n ->
+    let s, res_env = e#allocate in
+    res_env, [Mov (L n, s)]
+  | ST x ->
+    let s, res_env = (e#global x)#pop in
+    res_env, [Mov (s, eax); Mov (eax, res_env#loc x)]
+  | LD x ->
+    let s, res_env = (e#global x)#allocate in
+    res_env, [Mov (res_env#loc x, eax); Mov (eax, s)]
+  | BINOP op ->
+    let a, b, e1 = e#pop2 in
+      let s, res_env = e1#allocate in
+        let cmds, res = compile_operator op a b in
+        res_env, cmds @ [Mov (res, s)]
+  | LABEL label -> e, [Label label]
+  | JMP label -> e, [Jmp label]
+  | CJMP (condition, label) ->
+    let s, res_env = e#pop in
+    res_env, [Binop("cmp", L 0, s); CJmp(condition, label)]
+  | BEGIN (f_name, args, locals) ->
+    let res_env = e#enter f_name args locals in
+    res_env, [Push ebp; Mov(esp, ebp); Binop("-", M ("$" ^ res_env#lsize), esp)]
+  | END ->
+    let s = Printf.sprintf "\t.set %s, %d" e#lsize (e#allocated * word_size) in
+    e, [Label e#epilogue; Mov (ebp, esp); Pop ebp; Ret; Meta s]
+  | RET has_res ->
+    if has_res then
+      let res, res_env = e#pop in res_env, [Mov (res, eax); Jmp res_env#epilogue]
+    else e, [Jmp e#epilogue]
+  | CALL (f_name, n, is_proc) ->
+    let rec get_args env args n =
+    match n with
+     | 0 -> env, args
+     | i -> let param, env = env#pop in get_args env (param :: args) (i - 1)
+    in
+    let env, args = get_args e [] n in
+    let res_env, res = if is_proc then env, [] else let link, env = env#allocate in env, [Mov (eax, link)]
+    in res_env, (push_list env#live_registers)
+                @ (push_list (List.rev args))
+                @ [Call f_name;Binop ("+", L (n * word_size), esp)]
+                @ (List.rev_map (fun x -> Pop x) env#live_registers)
+                @ res
+let rec compile env code = match code with
+| [] -> env, []
+| instruction :: rest_code ->
+  (let env', asm = compile_instruction env instruction in
+    let res_env, rest_asm = compile env' rest_code in
+    res_env, asm @ rest_asm)
 
 (* A set of strings *)           
 module S = Set.Make (String)
 
+
+let init n f =
+  let rec _init iter n f = if iter < n then (f iter) :: (_init (iter + 1) n f) else []
+ in _init 0 n f
+
 (* Environment implementation *)
-let make_assoc l = List.combine l (List.init (List.length l) (fun x -> x))
-                     
+let make_assoc l = List.combine l (init (List.length l) (fun x -> x))
+
 class env =
   object (self)
     val globals     = S.empty (* a set of global variables         *)
