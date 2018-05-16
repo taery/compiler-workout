@@ -264,8 +264,11 @@ module S = Set.Make (String)
 module M = Map.Make (String)
 
 (* Environment implementation *)
-let make_assoc l = List.combine l (List.init (List.length l) (fun x -> x))
-                     
+let init n f =
+  let rec _init iter n f = if iter < n then (f iter) :: (_init (iter + 1) n f) else []
+ in _init 0 n f
+let make_assoc l = List.combine l (init (List.length l) (fun x -> x))
+
 class env =
   object (self)
     val globals     = S.empty (* a set of global variables         *)
